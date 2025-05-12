@@ -1,13 +1,58 @@
 import argparse
 import os
 import pickle
-# added comment
+
 import torch
-from go2_env import Go2Env
+from go2_env import FrankaGo2Env
 
 import genesis as gs
 
 
+"""
+Mapping from Franka to pandas 
+
+observation space
+- end effector (x, y, z) -> self.franka.get_link("hand")
+- block (x, y, z)        -> self.block.get
+- relative block (x, y, z) to gripper
+- joint displacement of of the right gripper finger -> self.franka.get_link("left_finger").get_pos
+- joint displacement of the left gripper finger
+- block rotation in xyz, euler frame rotation (angle rad)
+- block linear velocity in wrt gripper ()
+- block angular velocity (x, y, z)
+- end effector linear velocity (x, y, z) direction 
+- right gripper finger linear velocity 
+- left gripper finger linear velocity 
+
+desired goal 
+- final goal block position (x, y, z)      -> self.
+- 
+
+#TODO:
+- figure out which part of the code corresponds to setting power for the qpos joint
+- experiment with grasp_fixed cube to see what does what 
+
+
+
+
+
+
+achieved goal
+- current block position (x, y, z)         -> self.cube.get_pos()
+
+
+reward
+- torch.norm(block pos - goal pos )
+
+"""
+
+
+
+
+
+
+
+# https://github.com/google-deepmind/mujoco_menagerie/blob/main/franka_emika_panda/panda.xml
 def get_cfgs():
     env_cfg = {
         "num_actions": 12,
@@ -27,18 +72,14 @@ def get_cfgs():
             "RR_calf_joint": -1.5,
         },
         "joint_names": [
-            "FR_hip_joint",
-            "FR_thigh_joint",
-            "FR_calf_joint",
-            "FL_hip_joint",
-            "FL_thigh_joint",
-            "FL_calf_joint",
-            "RR_hip_joint",
-            "RR_thigh_joint",
-            "RR_calf_joint",
-            "RL_hip_joint",
-            "RL_thigh_joint",
-            "RL_calf_joint",
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "finger_joint1",
+            "finger_joint2",
         ],
         # PD
         "kp": 70.0,
@@ -77,7 +118,7 @@ def get_cfgs():
     return env_cfg, obs_cfg, reward_cfg, command_cfg
 
 
-class FrankaEnv(Go2Env):
+class FrankaEnv(FrankaGo2Env):
     def get_observations(self):
         phase = torch.pi * self.episode_length_buf[:, None] / self.max_episode_length
         self.obs_buf = torch.cat(
@@ -131,7 +172,7 @@ def main():
         show_viewer=True,
     )
 
-    policy = torch.jit.load(f"./backflip/{args.exp_name}.pt")
+    policy = torch.jit.load(f"./franka/{args.exp_name}.pt")
     policy.to(device=gs.device)
 
     obs, _ = env.reset()

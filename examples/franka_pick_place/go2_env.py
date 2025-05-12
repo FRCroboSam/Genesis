@@ -8,7 +8,7 @@ def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
-class Go2Env:
+class FrankaGo2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
@@ -193,6 +193,8 @@ class Go2Env:
     def get_privileged_observations(self):
         return None
 
+    #TODO: make this mimic franka pick place 
+    # generate the random location for the task
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
             return

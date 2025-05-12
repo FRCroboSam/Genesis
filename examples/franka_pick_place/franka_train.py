@@ -68,7 +68,7 @@ def get_train_cfg(exp_name, max_iterations):
 
 def get_cfgs():
     env_cfg = {
-        "num_actions": 12,
+        "num_actions": 4,
         # joint/link names
         "default_joint_angles": {  # [rad]
             "FL_hip_joint": 0.0,
