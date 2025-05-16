@@ -51,23 +51,39 @@ class FrankaGo2Env:
         # add plain
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
 
-        # add robot
-        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
-        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
-        self.inv_base_init_quat = inv_quat(self.base_init_quat)
-        self.robot = self.scene.add_entity(
-            gs.morphs.URDF(
-                file="urdf/go2/urdf/go2.urdf",
-                pos=self.base_init_pos.cpu().numpy(),
-                quat=self.base_init_quat.cpu().numpy(),
-            ),
+        self.franka = self.scene.add_entity(
+            gs.morphs.MJCF(file="../assets/xml/franka_emika_panda/panda.xml"),
         )
+        
+        self.cube = self.scene.add_entity(
+            gs.morphs.Box(
+                size=(0.04, 0.04, 0.04), # block
+                pos=(0.65, 0.0, 0.02),
+            )
+        )
+        
+        self.goal_target = self.scene.add_entity(
+            gs.morphs.Sphere(
+                pos=(0.0, 0.0, 0.0),
+                euler=(0.0, 0.0, 0.0),
+                visualization=True,
+                collision=False,
+                requires_jac_and_IK=False,
+                fixed=True,
+                radius=0.04
+            )
+        )
+        
+        #TODO: CONTINUE FIXING THIS
 
         # build
         self.scene.build(n_envs=num_envs)
 
         # names to indices
-        self.motors_dof_idx = [self.robot.get_joint(name).dof_start for name in self.env_cfg["joint_names"]]
+        cfgs = get_cfgs()
+        env_cfg = cfgs["env_cfg"]
+        dofs_idx = [self.franka.get_joint(name).dof_idx_local for name in env_cfg["joint_names"]]    
+
 
         # PD control parameters
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
@@ -240,6 +256,12 @@ class FrankaGo2Env:
         return self.obs_buf, None
 
     # ------------ reward functions----------------
+    
+    # reward based on how close cube is to the goal target
+    def _reward_franka_goal(self):
+        return -torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
+    
+    
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)

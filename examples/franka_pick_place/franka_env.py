@@ -6,34 +6,33 @@ import torch
 from go2_env import FrankaGo2Env
 
 import genesis as gs
+from scipy.spatial.transform import Rotation as R
 
 
 """
 Mapping from Franka to pandas 
 
+
+end_effeector -> franka.get_link("hand")
+
 observation space
 - end effector (x, y, z) -> self.franka.get_link("hand")
-- block (x, y, z)        -> self.block.get
+- block (x, y, z)        -> self.block.get_pos()
 - relative block (x, y, z) to gripper
-- joint displacement of of the right gripper finger -> self.franka.get_link("left_finger").get_pos
-- joint displacement of the left gripper finger
-- block rotation in xyz, euler frame rotation (angle rad)
-- block linear velocity in wrt gripper ()
-- block angular velocity (x, y, z)
-- end effector linear velocity (x, y, z) direction 
-- right gripper finger linear velocity 
-- left gripper finger linear velocity 
+- joint displacement of of the right gripper finger ->  franka.get_dofs_position([dofs_idx[8]])
+- joint displacement of the left gripper finger -> franka.get_dofs_position([dofs_idx[7]])
+- block rotation in xyz, euler frame rotation (angle rad) ->
+        quat = cube.get_quat()
+        r = R.from_quat(quat)
+        euler = r.as_euler('xyz', degrees=False)  # radians
+- block linear velocity in wrt gripper -> self.cube.get_vel() - end_effector.get_vel()
+- block angular velocity (x, y, z) -> self.cube.get_ang()
+- end effector linear velocity (x, y, z) direction -> end_effector.get_vel()
+- right gripper finger linear velocity -> franka.get_dofs_velocity([dofs_idx[8]])
+- left gripper finger linear velocity -> franka.get_dofs_velocity([dofs_idx[7]])
 
 desired goal 
-- final goal block position (x, y, z)      -> self.
-- 
-
-#TODO:
-- figure out which part of the code corresponds to setting power for the qpos joint
-- experiment with grasp_fixed cube to see what does what 
-
-
-
+- final goal block position (x, y, z)      -> self.block.get_pos()
 
 
 
@@ -45,12 +44,6 @@ reward
 - torch.norm(block pos - goal pos )
 
 """
-
-
-
-
-
-
 
 # https://github.com/google-deepmind/mujoco_menagerie/blob/main/franka_emika_panda/panda.xml
 def get_cfgs():
@@ -118,26 +111,31 @@ def get_cfgs():
     return env_cfg, obs_cfg, reward_cfg, command_cfg
 
 
+
+
 class FrankaEnv(FrankaGo2Env):
     def get_observations(self):
-        phase = torch.pi * self.episode_length_buf[:, None] / self.max_episode_length
+
+
         self.obs_buf = torch.cat(
             [
-                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
-                self.projected_gravity,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
-                self.dof_vel * self.obs_scales["dof_vel"],  # 12
-                self.actions,  # 12
-                self.last_actions,  # 12
-                torch.sin(phase),
-                torch.cos(phase),
-                torch.sin(phase / 2),
-                torch.cos(phase / 2),
-                torch.sin(phase / 4),
-                torch.cos(phase / 4),
+                torch.tensor(self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # end effector pos (3)
+                torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # cube pos (3)
+                torch.tensor(self.cube.get_pos() - self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # relative cube pos (3)
+                torch.tensor(self.franka.get_dofs_position([self.dofs_idx[8]]), dtype=torch.float32),  # right finger pos (1)
+                torch.tensor(self.franka.get_dofs_position([self.dofs_idx[7]]), dtype=torch.float32),  # left finger pos (1)
+                torch.tensor(R.from_quat(self.cube.get_quat()).as_euler('xyz', degrees=False), dtype=torch.float32),  # cube euler (3)
+                torch.tensor(self.cube.get_vel() - self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # relative vel (3)
+                torch.tensor(self.cube.get_ang(), dtype=torch.float32),                      # cube angular vel (3)
+                torch.tensor(self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # end effector vel (3)
+                torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[8]]), dtype=torch.float32),  # right finger vel (1)
+                torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[7]]), dtype=torch.float32),  # left finger vel (1)
+                torch.tensor(self.block.get_pos(), dtype=torch.float32),                    # desired goal (3)
+                torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # achieved goal (3)
             ],
-            axis=-1,
+            dim=-1,
         )
+
 
         return self.obs_buf
 
