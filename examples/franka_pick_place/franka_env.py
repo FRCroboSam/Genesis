@@ -45,24 +45,25 @@ reward
 
 """
 
+
+TODO: test out the setup configurations for reset env and then run it in grasp cube
+
 # https://github.com/google-deepmind/mujoco_menagerie/blob/main/franka_emika_panda/panda.xml
 def get_cfgs():
     env_cfg = {
-        "num_actions": 12,
-        # joint/link names
+        "num_actions": 4,
+        # TODO: FIND THE CORRECT VALUES FOR THIS -> Try xml file 
+#           franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
+
         "default_joint_angles": {  # [rad]
-            "FL_hip_joint": 0.0,
-            "FR_hip_joint": 0.0,
-            "RL_hip_joint": 0.0,
-            "RR_hip_joint": 0.0,
-            "FL_thigh_joint": 0.8,
-            "FR_thigh_joint": 0.8,
-            "RL_thigh_joint": 1.0,
-            "RR_thigh_joint": 1.0,
-            "FL_calf_joint": -1.5,
-            "FR_calf_joint": -1.5,
-            "RL_calf_joint": -1.5,
-            "RR_calf_joint": -1.5,
+            "joint1": 0.0,
+            "joint2": 0.0,
+            "joint3": 0.0,
+            "joint4": 0.0,
+            "joint5": 0.8,
+            "joint6": 0.8,
+            "finger_joint1": 1.0,
+            "finger_joint2": 1.0,
         },
         "joint_names": [
             "joint1",
@@ -71,6 +72,7 @@ def get_cfgs():
             "joint4",
             "joint5",
             "joint6",
+            "joint7"
             "finger_joint1",
             "finger_joint2",
         ],
@@ -99,10 +101,12 @@ def get_cfgs():
         },
     }
     reward_cfg = {
-        "reward_scales": {},
+            "reward_scales": {
+            "goal_distance": -1.0,
+        },
     }
     command_cfg = {
-        "num_commands": 3,
+        "num_commands": 4,
         "lin_vel_x_range": [0, 0],
         "lin_vel_y_range": [0, 0],
         "ang_vel_range": [0, 0],
@@ -115,8 +119,6 @@ def get_cfgs():
 
 class FrankaEnv(FrankaGo2Env):
     def get_observations(self):
-
-
         self.obs_buf = torch.cat(
             [
                 torch.tensor(self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # end effector pos (3)
@@ -135,8 +137,6 @@ class FrankaEnv(FrankaGo2Env):
             ],
             dim=-1,
         )
-
-
         return self.obs_buf
 
     def step(self, actions):

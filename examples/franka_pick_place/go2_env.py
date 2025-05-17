@@ -51,6 +51,8 @@ class FrankaGo2Env:
         # add plain
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
 
+        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
+        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
         self.franka = self.scene.add_entity(
             gs.morphs.MJCF(file="../assets/xml/franka_emika_panda/panda.xml"),
         )
@@ -80,9 +82,7 @@ class FrankaGo2Env:
         self.scene.build(n_envs=num_envs)
 
         # names to indices
-        cfgs = get_cfgs()
-        env_cfg = cfgs["env_cfg"]
-        dofs_idx = [self.franka.get_joint(name).dof_idx_local for name in env_cfg["joint_names"]]    
+        self.dofs_idx = [self.franka.get_joint(name).dof_idx_local for name in env_cfg["joint_names"]]    
 
 
         # PD control parameters
@@ -181,6 +181,7 @@ class FrankaGo2Env:
             rew = reward_func() * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
+        
 
         # compute observations
         self.obs_buf = torch.cat(
@@ -218,6 +219,7 @@ class FrankaGo2Env:
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
         self.dof_vel[envs_idx] = 0.0
+        #TODO: Change this to be the robot position
         self.robot.set_dofs_position(
             position=self.dof_pos[envs_idx],
             dofs_idx_local=self.motors_dof_idx,
@@ -225,7 +227,7 @@ class FrankaGo2Env:
             envs_idx=envs_idx,
         )
 
-        # reset base
+        # reset robot to original configuration
         self.base_pos[envs_idx] = self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
         self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
@@ -258,32 +260,7 @@ class FrankaGo2Env:
     # ------------ reward functions----------------
     
     # reward based on how close cube is to the goal target
-    def _reward_franka_goal(self):
-        return -torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
+    # reward scales make this negative later
+    def _reward_goal_distance(self):
+        return torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
     
-    
-    def _reward_tracking_lin_vel(self):
-        # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
-
-    def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw)
-        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])
-
-    def _reward_lin_vel_z(self):
-        # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])
-
-    def _reward_action_rate(self):
-        # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
-
-    def _reward_similar_to_default(self):
-        # Penalize joint poses far away from default pose
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
-
-    def _reward_base_height(self):
-        # Penalize base height away from target
-        return torch.square(self.base_pos[:, 2] - self.reward_cfg["base_height_target"])
