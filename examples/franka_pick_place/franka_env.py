@@ -46,7 +46,10 @@ reward
 """
 
 
-TODO: test out the setup configurations for reset env and then run it in grasp cube
+# TODO: test out the setup configurations for reset env and then run it in grasp cube
+
+#Shouldn't need commands for manipulation tasks since its usually things like moving forward, desired velocities 
+
 
 # https://github.com/google-deepmind/mujoco_menagerie/blob/main/franka_emika_panda/panda.xml
 def get_cfgs():
@@ -56,14 +59,15 @@ def get_cfgs():
 #           franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
 
         "default_joint_angles": {  # [rad]
-            "joint1": 0.0,
-            "joint2": 0.0,
-            "joint3": 0.0,
-            "joint4": 0.0,
-            "joint5": 0.8,
-            "joint6": 0.8,
-            "finger_joint1": 1.0,
-            "finger_joint2": 1.0,
+            "joint1": -1.0124,
+            "joint2": 1.5559,
+            "joint3": 1.3662,
+            "joint4": -1.6878,
+            "joint5": -1.5799,
+            "joint6": 1.7757,
+            "joint7": 1.4602,
+            "finger_joint1": 0.0,
+            "finger_joint2": 0.0,
         },
         "joint_names": [
             "joint1",
@@ -80,19 +84,17 @@ def get_cfgs():
         "kp": 70.0,
         "kd": 3.0,
         # termination
-        "termination_if_roll_greater_than": 1000,  # degree
-        "termination_if_pitch_greater_than": 1000,
+
         # base pose
-        "base_init_pos": [0.0, 0.0, 0.35],
-        "base_init_quat": [0.0, 0.0, 0.0, 1.0],
-        "episode_length_s": 20.0,
-        "resampling_time_s": 4.0,
-        "action_scale": 0.5,
-        "simulate_action_latency": True,
-        "clip_actions": 100.0,
+
+        "episode_length_s": 5.0,
+        "resampling_time_s": None,
+        "action_scale": 0.05,
+        "simulate_action_latency": False,   #can try turning this to True
+        "clip_actions": 1.0,
     }
     obs_cfg = {
-        "num_obs": 60,
+        "num_obs": 42,
         "obs_scales": {
             "lin_vel": 2.0,
             "ang_vel": 0.25,
@@ -134,6 +136,8 @@ class FrankaEnv(FrankaGo2Env):
                 torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[7]]), dtype=torch.float32),  # left finger vel (1)
                 torch.tensor(self.block.get_pos(), dtype=torch.float32),                    # desired goal (3)
                 torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # achieved goal (3)
+                self.actions,
+                self.last_actions
             ],
             dim=-1,
         )
@@ -185,6 +189,6 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/locomotion/go2_backflip.py -e single
+python examples/franka_pick_place/go2_backflip.py -e single
 python examples/locomotion/go2_backflip.py -e double
 """

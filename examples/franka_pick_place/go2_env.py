@@ -2,7 +2,9 @@ import torch
 import math
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
-
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+from numpy import random 
 
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
@@ -10,6 +12,7 @@ def gs_rand_float(lower, upper, shape, device):
 
 class FrankaGo2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+        self.reach_target_threshold = 0.08
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = None
@@ -75,6 +78,21 @@ class FrankaGo2Env:
                 radius=0.04
             )
         )
+        default_goal_pos = np.array([0.7, 0.0, 0])
+
+        # Initialize random goal target positions
+        for _ in range(12):
+            # default range
+            offset = np.array([random.rand() * 0.2, random.rand() * 0.6 - 0.3, 0.35 * random.rand() + 0.1])
+            #less picky range
+            # offset = np.array([random.rand() * 0.1, random.rand() * 0.4 - 0.2, 0.2 * random.rand() + 0.1])
+
+            target_pos = default_goal_pos + offset
+            target_pos = np.repeat(target_pos[np.newaxis], self.num_envs, axis=0)
+            self.target_poses.append(target_pos)
+
+
+
         
         #TODO: CONTINUE FIXING THIS
 
@@ -97,22 +115,12 @@ class FrankaGo2Env:
             self.episode_sums[name] = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
         # initialize buffers
-        self.base_lin_vel = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.base_ang_vel = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.projected_gravity = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.global_gravity = torch.tensor([0.0, 0.0, -1.0], device=gs.device, dtype=gs.tc_float).repeat(
-            self.num_envs, 1
-        )
+        
         self.obs_buf = torch.zeros((self.num_envs, self.num_obs), device=gs.device, dtype=gs.tc_float)
         self.rew_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
         self.reset_buf = torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
-        self.commands = torch.zeros((self.num_envs, self.num_commands), device=gs.device, dtype=gs.tc_float)
-        self.commands_scale = torch.tensor(
-            [self.obs_scales["lin_vel"], self.obs_scales["lin_vel"], self.obs_scales["ang_vel"]],
-            device=gs.device,
-            dtype=gs.tc_float,
-        )
+
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
@@ -136,38 +144,48 @@ class FrankaGo2Env:
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
-        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        self.robot.control_dofs_position(target_dof_pos, self.motors_dof_idx)
+
+
+        delta_pos = exec_actions[:, :3] * 0.05  #should be 5cm max movement
+        gripper_cmd = exec_actions[:, 3]
+
+        finger_width = (1 + gripper_cmd) * 0.02  # Map [-1,1]→[0,0.04]
+        finger_pos = torch.stack([finger_width, finger_width], dim=1)  # Both fingers
+
+
+
+        self.qpos = self.franka.inverse_kinematics(
+            link=self.end_effector,
+            pos=self.pos,
+            quat=self.quat,
+        )
+
+
+        
+        # Execute movements
+        self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
+
+        # if not self.place_only:
+        self.franka.control_dofs_position(finger_pos, self.fingers_dof, self.envs_idx)
         self.scene.step()
 
         # update buffers
         self.episode_length_buf += 1
-        self.base_pos[:] = self.robot.get_pos()
-        self.base_quat[:] = self.robot.get_quat()
-        self.base_euler = quat_to_xyz(
-            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat),
-            rpy=True,
-            degrees=True,
-        )
-        inv_base_quat = inv_quat(self.base_quat)
-        self.base_lin_vel[:] = transform_by_quat(self.robot.get_vel(), inv_base_quat)
-        self.base_ang_vel[:] = transform_by_quat(self.robot.get_ang(), inv_base_quat)
-        self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
-        self.dof_pos[:] = self.robot.get_dofs_position(self.motors_dof_idx)
-        self.dof_vel[:] = self.robot.get_dofs_velocity(self.motors_dof_idx)
+
+
 
         # resample commands
-        envs_idx = (
-            (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
-            .nonzero(as_tuple=False)
-            .flatten()
-        )
-        self._resample_commands(envs_idx)
+        # envs_idx = (
+        #     (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
+        #     .nonzero(as_tuple=False)
+        #     .flatten()
+        # )
 
         # check termination and reset
         self.reset_buf = self.episode_length_buf > self.max_episode_length
-        self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
-        self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
+
+        self.reset_buf |= self._reward_goal_distance() <= self.reach_target_threshold
+
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=gs.device, dtype=gs.tc_float)
@@ -186,12 +204,20 @@ class FrankaGo2Env:
         # compute observations
         self.obs_buf = torch.cat(
             [
-                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
-                self.projected_gravity,  # 3
-                self.commands * self.commands_scale,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
-                self.dof_vel * self.obs_scales["dof_vel"],  # 12
-                self.actions,  # 12
+                torch.tensor(self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # end effector pos (3)
+                torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # cube pos (3)
+                torch.tensor(self.cube.get_pos() - self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # relative cube pos (3)
+                torch.tensor(self.franka.get_dofs_position([self.dofs_idx[8]]), dtype=torch.float32),  # right finger pos (1)
+                torch.tensor(self.franka.get_dofs_position([self.dofs_idx[7]]), dtype=torch.float32),  # left finger pos (1)
+                torch.tensor(R.from_quat(self.cube.get_quat()).as_euler('xyz', degrees=False), dtype=torch.float32),  # cube euler (3)
+                torch.tensor(self.cube.get_vel() - self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # relative vel (3)
+                torch.tensor(self.cube.get_ang(), dtype=torch.float32),                      # cube angular vel (3)
+                torch.tensor(self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # end effector vel (3)
+                torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[8]]), dtype=torch.float32),  # right finger vel (1)
+                torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[7]]), dtype=torch.float32),  # left finger vel (1)
+                torch.tensor(self.block.get_pos(), dtype=torch.float32),                    # desired goal (3)
+                torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # achieved goal (3)
+                self.actions
             ],
             axis=-1,
         )
@@ -219,22 +245,27 @@ class FrankaGo2Env:
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
         self.dof_vel[envs_idx] = 0.0
-        #TODO: Change this to be the robot position
-        self.robot.set_dofs_position(
-            position=self.dof_pos[envs_idx],
-            dofs_idx_local=self.motors_dof_idx,
-            zero_velocity=True,
-            envs_idx=envs_idx,
-        )
 
-        # reset robot to original configuration
-        self.base_pos[envs_idx] = self.base_init_pos
-        self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
-        self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        self.base_lin_vel[envs_idx] = 0
-        self.base_ang_vel[envs_idx] = 0
-        self.robot.zero_all_dofs_velocity(envs_idx)
+
+        franka_pos = torch.tensor([...]).to(self.device)  # (9,)
+        franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
+        self.franka.set_qpos(franka_pos, envs_idx=envs_idx)
+        self.scene.step()
+
+        # Initial end effector target original 0.135
+        pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
+        self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
+        quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
+        self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
+
+        cube_init_pos = np.array([0.65, 0.0, 0.02])
+        self.cube.set_pos(cube_init_pos)
+
+
+
+        goal_pos = self.target_poses[self.goal_index % len(self.target_poses)]
+        self.goal_target.set_pos(goal_pos, envs_idx=self.envs_idx)  #we already did the repeat earlier
+        self.goal_index += 1
 
         # reset buffers
         self.last_actions[envs_idx] = 0.0
