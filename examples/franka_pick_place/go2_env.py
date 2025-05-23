@@ -12,6 +12,8 @@ def gs_rand_float(lower, upper, shape, device):
 
 class FrankaGo2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+        self.goal_index = 0
+        self.target_poses = []
         self.reach_target_threshold = 0.08
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
@@ -54,11 +56,14 @@ class FrankaGo2Env:
         # add plain
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
 
-        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
-        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
+        # self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
+        # self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
         self.franka = self.scene.add_entity(
             gs.morphs.MJCF(file="../assets/xml/franka_emika_panda/panda.xml"),
         )
+        
+        self.end_effector = self.franka.get_link("hand")
+
         
         self.cube = self.scene.add_entity(
             gs.morphs.Box(
@@ -66,6 +71,11 @@ class FrankaGo2Env:
                 pos=(0.65, 0.0, 0.02),
             )
         )
+        
+        self.envs_idx = np.arange(num_envs)
+
+        
+
         
         self.goal_target = self.scene.add_entity(
             gs.morphs.Sphere(
@@ -98,14 +108,27 @@ class FrankaGo2Env:
 
         # build
         self.scene.build(n_envs=num_envs)
+        
+        pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
+        self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
+        quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
+        self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
+        
+        self.motors_dof = torch.arange(7).to(self.device)
+        self.fingers_dof = torch.arange(7, 9).to(self.device)
+        
+        
 
         # names to indices
+        print("ENV CONFIG: " + str(env_cfg))
+        for name in env_cfg["joint_names"]:
+            print("JOINT NAME IS: " + name)
         self.dofs_idx = [self.franka.get_joint(name).dof_idx_local for name in env_cfg["joint_names"]]    
 
 
         # PD control parameters
-        self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
-        self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motors_dof_idx)
+        # self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
+        # self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motors_dof_idx)
 
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -152,6 +175,7 @@ class FrankaGo2Env:
         finger_width = (1 + gripper_cmd) * 0.02  # Map [-1,1]→[0,0.04]
         finger_pos = torch.stack([finger_width, finger_width], dim=1)  # Both fingers
 
+        self.pos += delta_pos
 
 
         self.qpos = self.franka.inverse_kinematics(
@@ -200,6 +224,7 @@ class FrankaGo2Env:
             self.rew_buf += rew
             self.episode_sums[name] += rew
         
+        cube_euler = torch.tensor(R.from_quat(self.cube.get_quat().detach().cpu().numpy()).as_euler('xyz', degrees=False), dtype=torch.float32)
 
         # compute observations
         self.obs_buf = torch.cat(
@@ -209,13 +234,13 @@ class FrankaGo2Env:
                 torch.tensor(self.cube.get_pos() - self.franka.get_link("hand").get_pos(), dtype=torch.float32),  # relative cube pos (3)
                 torch.tensor(self.franka.get_dofs_position([self.dofs_idx[8]]), dtype=torch.float32),  # right finger pos (1)
                 torch.tensor(self.franka.get_dofs_position([self.dofs_idx[7]]), dtype=torch.float32),  # left finger pos (1)
-                torch.tensor(R.from_quat(self.cube.get_quat()).as_euler('xyz', degrees=False), dtype=torch.float32),  # cube euler (3)
+                cube_euler,                                                                 # cube euler (3)
                 torch.tensor(self.cube.get_vel() - self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # relative vel (3)
                 torch.tensor(self.cube.get_ang(), dtype=torch.float32),                      # cube angular vel (3)
                 torch.tensor(self.franka.get_link("hand").get_vel(), dtype=torch.float32),  # end effector vel (3)
                 torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[8]]), dtype=torch.float32),  # right finger vel (1)
                 torch.tensor(self.franka.get_dofs_velocity([self.dofs_idx[7]]), dtype=torch.float32),  # left finger vel (1)
-                torch.tensor(self.block.get_pos(), dtype=torch.float32),                    # desired goal (3)
+                torch.tensor(self.goal_target.get_pos(), dtype=torch.float32),                    # desired goal (3)
                 torch.tensor(self.cube.get_pos(), dtype=torch.float32),                     # achieved goal (3)
                 self.actions
             ],
@@ -243,11 +268,13 @@ class FrankaGo2Env:
             return
 
         # reset dofs
-        self.dof_pos[envs_idx] = self.default_dof_pos
-        self.dof_vel[envs_idx] = 0.0
+        # print("DOF POS SHAPE: " + str(self.dof_pos.shape))
+        # print("DEFAULT DOF POS: " + str(self.default_dof_pos))
+        # self.dof_pos[envs_idx] = self.default_dof_pos
+        # self.dof_vel[envs_idx] = 0.0
 
 
-        franka_pos = torch.tensor([...]).to(self.device)  # (9,)
+        franka_pos = self.default_dof_pos  # (9,)
         franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
         self.franka.set_qpos(franka_pos, envs_idx=envs_idx)
         self.scene.step()
@@ -255,11 +282,15 @@ class FrankaGo2Env:
         # Initial end effector target original 0.135
         pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
         self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
+        
+        
         quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
         self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
-
-        cube_init_pos = np.array([0.65, 0.0, 0.02])
-        self.cube.set_pos(cube_init_pos)
+        
+        cube_pos = np.array([0.65, 0.0, 0.06])
+        cube_pos = np.repeat(cube_pos[np.newaxis], self.num_envs, axis=0)
+        self.cube.set_pos(cube_pos, envs_idx=self.envs_idx)
+        
 
 
 
@@ -281,7 +312,7 @@ class FrankaGo2Env:
             )
             self.episode_sums[key][envs_idx] = 0.0
 
-        self._resample_commands(envs_idx)
+        # self._resample_commands(envs_idx)
 
     def reset(self):
         self.reset_buf[:] = True
@@ -294,4 +325,3 @@ class FrankaGo2Env:
     # reward scales make this negative later
     def _reward_goal_distance(self):
         return torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
-    

@@ -69,24 +69,46 @@ def get_train_cfg(exp_name, max_iterations):
 def get_cfgs():
     env_cfg = {
         "num_actions": 4,
-        # joint/link names
+        # TODO: FIND THE CORRECT VALUES FOR THIS -> Try xml file 
+#           franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
+
+        "default_joint_angles": {  # [rad]
+            "joint1": -1.0124,
+            "joint2": 1.5559,
+            "joint3": 1.3662,
+            "joint4": -1.6878,
+            "joint5": -1.5799,
+            "joint6": 1.7757,
+            "joint7": 1.4602,
+            "finger_joint1": 0.0,
+            "finger_joint2": 0.0,
+        },
+        "joint_names": [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "joint7",
+            "finger_joint1",
+            "finger_joint2",
+        ],
         # PD
-        "kp": 20.0,
-        "kd": 0.5,
+        "kp": 70.0,
+        "kd": 3.0,
         # termination
-        "termination_if_roll_greater_than": 10,  # degree
-        "termination_if_pitch_greater_than": 10,
+
         # base pose
-        "base_init_pos": [0.0, 0.0, 0.42],
-        "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 20.0,
-        "resampling_time_s": 4.0,
-        "action_scale": 0.25,
-        "simulate_action_latency": True,
-        "clip_actions": 100.0,
+
+        "episode_length_s": 5.0,
+        "resampling_time_s": None,
+        "action_scale": 0.05,
+        "simulate_action_latency": False,   #can try turning this to True
+        "clip_actions": 1.0,
     }
     obs_cfg = {
-        "num_obs": 45,
+        "num_obs": 35,
         "obs_scales": {
             "lin_vel": 2.0,
             "ang_vel": 0.25,
@@ -95,13 +117,13 @@ def get_cfgs():
         },
     }
     reward_cfg = {
-        "reward_scales": {
+            "reward_scales": {
             "goal_distance": -1.0,
         },
     }
     command_cfg = {
-        "num_commands": 3,
-        "lin_vel_x_range": [0.5, 0.5],
+        "num_commands": 4,
+        "lin_vel_x_range": [0, 0],
         "lin_vel_y_range": [0, 0],
         "ang_vel_range": [0, 0],
     }

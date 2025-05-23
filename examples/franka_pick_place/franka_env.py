@@ -164,7 +164,6 @@ def main():
         env_cfg["episode_length_s"] = 3
     else:
         raise RuntimeError
-
     env = FrankaEnv(
         num_envs=1,
         env_cfg=env_cfg,
@@ -186,6 +185,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+#This is basicaly an eval script
+
 
 """
 # evaluation
