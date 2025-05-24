@@ -9,9 +9,22 @@ from numpy import random
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
+#TODO: figure out why the timestep when you actual start stepping doesn't start at 0
+
+
+#TODO: FIIGURE OUT WHY ARM IS STILL MOVING WHEN I TURN OFF THE dof_position movement in step
+#TODO: FIGURE OUT WHY TIMESTPE WASNT AT ZERO BEFORE
+# TODO: TEST THAT ACTION ACTUALLY CORRESPONDS TO CORRECT MOVEMENT AND IS APPLIED IN THE CORRECT PLACE
+# #TODO: FIGURE OUT WHAT POS ACTUALLY MEANS AND WHATS DIFF BETWEEN THAT AND THE ANGLE STUFF
+
+
+
+
 
 class FrankaGo2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+
+        self.first_time_step = True       #TODO: FIGURE OUT THE CORE ISSUE THIS IS JUST HACK FIX FOR NOW
         self.goal_index = 0
         self.target_poses = []
         self.reach_target_threshold = 0.08
@@ -23,8 +36,9 @@ class FrankaGo2Env:
         self.device = gs.device
 
         self.simulate_action_latency = True  # there is a 1 step latency on real robot
-        self.dt = 0.02  # control frequency on real robot is 50hz
+        self.dt = 0.5  # control frequency on real robot is 50hz, default 0.02
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
+        print("MAX EPISODE LENGTH: " + str(self.max_episode_length))
 
         self.env_cfg = env_cfg
         self.obs_cfg = obs_cfg
@@ -33,6 +47,8 @@ class FrankaGo2Env:
 
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = reward_cfg["reward_scales"]
+
+        show_viewer = True
 
         # create scene
         self.scene = gs.Scene(
@@ -143,6 +159,7 @@ class FrankaGo2Env:
         self.rew_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
         self.reset_buf = torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
+        self.global_timestep = self.episode_length_buf
 
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)
         self.last_actions = torch.zeros_like(self.actions)
@@ -158,6 +175,7 @@ class FrankaGo2Env:
         )
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
+        self.reset()
 
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), gs.device)
@@ -165,6 +183,11 @@ class FrankaGo2Env:
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), gs.device)
 
     def step(self, actions):
+        if self.first_time_step:
+            print("FIRST TIME STEP: " + "RESETTING")
+            self.reset()
+            self.first_time_step = False 
+        print("TIMESTEP: " + str(self.episode_length_buf))
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
 
@@ -174,8 +197,14 @@ class FrankaGo2Env:
 
         finger_width = (1 + gripper_cmd) * 0.02  # Map [-1,1]→[0,0.04]
         finger_pos = torch.stack([finger_width, finger_width], dim=1)  # Both fingers
+        
 
+
+
+        delta_pos = 0    #JUST TO SEE WHAT STARTING CONFIG ACTUALLY LOOKS LIKE
         self.pos += delta_pos
+
+        print("SELF POS: " + str(self.pos))
 
 
         self.qpos = self.franka.inverse_kinematics(
@@ -187,7 +216,7 @@ class FrankaGo2Env:
 
         
         # Execute movements
-        self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
+        # self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
 
         # if not self.place_only:
         self.franka.control_dofs_position(finger_pos, self.fingers_dof, self.envs_idx)
@@ -195,6 +224,7 @@ class FrankaGo2Env:
 
         # update buffers
         self.episode_length_buf += 1
+        self.global_timestep = self.episode_length_buf
 
 
 
@@ -209,6 +239,7 @@ class FrankaGo2Env:
         self.reset_buf = self.episode_length_buf > self.max_episode_length
 
         self.reset_buf |= self._reward_goal_distance() <= self.reach_target_threshold
+        print(str("REWARD DISTANCE: " + str(self._reward_goal_distance())))
 
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
@@ -266,6 +297,7 @@ class FrankaGo2Env:
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
             return
+        print("RESETTING at timestep: " + str(self.global_timestep))
 
         # reset dofs
         # print("DOF POS SHAPE: " + str(self.dof_pos.shape))
@@ -303,6 +335,8 @@ class FrankaGo2Env:
         self.last_dof_vel[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
+        print("RESETTING FOR: " + str(envs_idx) +  " with shape: " + str(envs_idx.shape))
+        print("RESET BUFS ARE: " + str(self.episode_length_buf))
 
         # fill extras
         self.extras["episode"] = {}
@@ -317,6 +351,7 @@ class FrankaGo2Env:
     def reset(self):
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=gs.device))
+        print("STARTING EPISODE LENGTH BUF: " + str(self.episode_length_buf))
         return self.obs_buf, None
 
     # ------------ reward functions----------------

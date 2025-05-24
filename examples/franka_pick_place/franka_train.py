@@ -101,7 +101,7 @@ def get_cfgs():
 
         # base pose
 
-        "episode_length_s": 5.0,
+        "episode_length_s": 1.0,
         "resampling_time_s": None,
         "action_scale": 0.05,
         "simulate_action_latency": False,   #can try turning this to True
