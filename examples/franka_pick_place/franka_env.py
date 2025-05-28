@@ -66,8 +66,8 @@ def get_cfgs():
             "joint5": -1.5799,
             "joint6": 1.7757,
             "joint7": 1.4602,
-            "finger_joint1": 0.0,
-            "finger_joint2": 0.0,
+            "finger_joint1": 0.04,
+            "finger_joint2": 0.04,
         },
         "joint_names": [
             "joint1",
