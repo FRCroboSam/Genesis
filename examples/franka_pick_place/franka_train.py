@@ -118,7 +118,7 @@ def get_cfgs():
     }
     reward_cfg = {
             "reward_scales": {
-            "goal_distance": -1.0,
+            "goal_distance": 1.0,
         },
     }
     command_cfg = {
@@ -135,6 +135,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="go2-walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
+    parser.add_argument("-v", "--show_viewer", action="store_true", help="Show the viewer")
     parser.add_argument("--max_iterations", type=int, default=101)
     args = parser.parse_args()
 
@@ -152,9 +153,9 @@ def main():
         [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
-
+    print("SHOWING VIEWER: " + str(args.show_viewer))
     env = FrankaGo2Env(
-        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
+        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg, show_viewer=args.show_viewer
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)

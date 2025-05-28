@@ -104,7 +104,7 @@ def get_cfgs():
     }
     reward_cfg = {
             "reward_scales": {
-            "goal_distance": -1.0,
+            "goal_distance": 1.0,
         },
     }
     command_cfg = {

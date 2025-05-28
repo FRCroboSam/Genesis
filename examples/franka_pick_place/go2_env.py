@@ -50,7 +50,7 @@ class FrankaGo2Env:
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
-            show_viewer=True,
+            show_viewer=show_viewer,
         )
 
         # add plain
@@ -88,7 +88,7 @@ class FrankaGo2Env:
                 radius=0.04
             )
         )
-        default_goal_pos = np.array([0.7, 0.0, 0])
+        self.default_goal_pos = np.array([0.7, 0.0, 0])
 
         # Initialize random goal target positions
         for _ in range(12):
@@ -97,7 +97,7 @@ class FrankaGo2Env:
             #less picky range
             # offset = np.array([random.rand() * 0.1, random.rand() * 0.4 - 0.2, 0.2 * random.rand() + 0.1])
 
-            target_pos = default_goal_pos + offset
+            target_pos = self.default_goal_pos + offset
             target_pos = np.repeat(target_pos[np.newaxis], self.num_envs, axis=0)
             self.target_poses.append(target_pos)
 
@@ -166,7 +166,7 @@ class FrankaGo2Env:
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), gs.device)
 
     def step(self, actions):
-        print("TIMESTEP: " + str(self.episode_length_buf))
+        # print("TIMESTEP: " + str(self.episode_length_buf))
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
 
@@ -194,11 +194,11 @@ class FrankaGo2Env:
 
         
         # Execute movements
-        # self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
+        self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
 
-        # # if not self.place_only:
-        # self.franka.control_dofs_position(finger_pos, self.fingers_dof, self.envs_idx)
-        # self.scene.step()
+        # if not self.place_only:
+        self.franka.control_dofs_position(finger_pos, self.fingers_dof, self.envs_idx)
+        self.scene.step()
 
         # update buffers
         self.episode_length_buf += 1
@@ -215,7 +215,7 @@ class FrankaGo2Env:
         # check termination and reset
         self.reset_buf = self.episode_length_buf > self.max_episode_length
 
-        self.reset_buf |= self._reward_goal_distance() <= self.reach_target_threshold
+        self.reset_buf |= self._goal_distance() <= self.reach_target_threshold
 
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
@@ -227,7 +227,9 @@ class FrankaGo2Env:
         # compute reward
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
+            # print("REWARD FUNC IS: " + str(reward_func))
             rew = reward_func() * self.reward_scales[name]
+            # print("REWARD IS: " + str(rew))
             self.rew_buf += rew
             self.episode_sums[name] += rew
         
@@ -275,49 +277,54 @@ class FrankaGo2Env:
             return
 
         # reset dofs
-        # print("DOF POS SHAPE: " + str(self.dof_pos.shape))
-        # print("DEFAULT DOF POS: " + str(self.default_dof_pos))
-        # self.dof_pos[envs_idx] = self.default_dof_pos
-        # self.dof_vel[envs_idx] = 0.0
-
-
-        franka_pos = torch.tensor([-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]).to(self.device)
-
-        franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
+        franka_pos = torch.tensor(
+            [-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04], 
+            device=self.device
+        )
+        franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)
         self.franka.set_qpos(franka_pos, envs_idx=envs_idx)
         self.scene.step()
 
-        # Initial end effector target original 0.135
-        # pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
+        # Reset pos and quat only for the envs being reset
         pos = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
-        self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
-        
-        
+        self.pos[envs_idx] = pos.unsqueeze(0).repeat(len(envs_idx), 1)
+
         quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
-        self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
-        
-        cube_pos = np.array([0.65, 0.0, 0.02])
-        cube_pos = np.repeat(cube_pos[np.newaxis], self.num_envs, axis=0)
-        self.cube.set_pos(cube_pos, envs_idx=self.envs_idx)
-        
+        self.quat[envs_idx] = quat.unsqueeze(0).repeat(len(envs_idx), 1)
 
-        arm_pos = torch.tensor([0.1, 0.0, 0.8]).to(self.device)
-        arm_pos = arm_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
+        # Reset cube position only for envs being reset
+        cube_pos = np.array([0.5, 0.0, 0.02])
+        cube_pos_batch = np.repeat(cube_pos[np.newaxis], len(envs_idx), axis=0)
+        self.cube.set_pos(cube_pos_batch, envs_idx=envs_idx)
 
+        # Reset arm pos for envs being reset
+        arm_pos = torch.tensor([0.1, 0.0, 0.8], device=self.device)
+        arm_pos = arm_pos.unsqueeze(0).repeat(len(envs_idx), 1)
+        # (You can assign/use arm_pos here as needed for envs_idx)
 
+        # Generate random offset per env to reset
+        x = torch.empty(len(envs_idx), device=self.device).uniform_(0.0, 0.2)
+        y = torch.empty(len(envs_idx), device=self.device).uniform_(-0.3, 0.3)
+        z = torch.empty(len(envs_idx), device=self.device).uniform_(0.1, 0.45)
 
+        offsets = torch.stack([x, y, z], dim=1)  # shape: (len(envs_idx), 3)
 
-        goal_pos = self.target_poses[self.goal_index % len(self.target_poses)]
-        self.goal_target.set_pos(goal_pos, envs_idx=self.envs_idx)  #we already did the repeat earlier
-        self.goal_index += 1
+        # Convert default_goal_pos to a torch tensor and repeat for envs_idx length
+        default_goal_pos = torch.tensor(self.default_goal_pos, dtype=torch.float32, device=self.device)
+        default_goal_pos = default_goal_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # shape: [len(envs_idx), 3]
 
-        # reset buffers
+        new_goal_pos = default_goal_pos + offsets  # both torch tensors on the same device
+        # print("NEW GOAL POS FOR: " + str(envs_idx))
+        self.goal_target.set_pos(new_goal_pos, envs_idx=envs_idx)
+        # print("SELF GOAL TARGET POSES ARE: " + str(self.goal_target.get_pos()))
+
+        # Reset buffers only for envs_idx
         self.last_actions[envs_idx] = 0.0
         self.last_dof_vel[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
-        # fill extras
+        # Update extras for envs_idx
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
             self.extras["episode"]["rew_" + key] = (
@@ -325,10 +332,78 @@ class FrankaGo2Env:
             )
             self.episode_sums[key][envs_idx] = 0.0
 
+        # Uncomment if you want to resample commands
         # self._resample_commands(envs_idx)
 
-        # self.franka.set_pos(self.pos, envs_idx=envs_idx)
-        # self.scene.step()
+
+
+
+    # def reset_idx(self, envs_idx):
+    #     if len(envs_idx) == 0:
+    #         return
+
+    #     # reset dofs
+    #     # print("DOF POS SHAPE: " + str(self.dof_pos.shape))
+    #     # print("DEFAULT DOF POS: " + str(self.default_dof_pos))
+    #     # self.dof_pos[envs_idx] = self.default_dof_pos
+    #     # self.dof_vel[envs_idx] = 0.0
+
+
+    #     franka_pos = torch.tensor([-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]).to(self.device)
+
+    #     franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
+    #     self.franka.set_qpos(franka_pos, envs_idx=envs_idx)
+    #     self.scene.step()
+
+    #     # Initial end effector target original 0.135
+    #     # pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
+    #     pos = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
+    #     self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
+        
+        
+    #     quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
+    #     self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
+        
+    #     cube_pos = np.array([0.65, 0.0, 0.02])
+    #     cube_pos = np.repeat(cube_pos[np.newaxis], self.num_envs, axis=0)
+    #     self.cube.set_pos(cube_pos, envs_idx=self.envs_idx)
+        
+
+    #     arm_pos = torch.tensor([0.1, 0.0, 0.8]).to(self.device)
+    #     arm_pos = arm_pos.unsqueeze(0).repeat(len(envs_idx), 1)  # repeat only for envs being reset
+
+
+
+
+    #     x = np.random.uniform(0.0, 0.2)       # [0, 0.2]
+    #     y = np.random.uniform(-0.3, 0.3)      # [-0.3, 0.3]
+    #     z = np.random.uniform(0.1, 0.45)      # [0.1, 0.45]
+
+    #     offset = np.array([x, y, z])
+
+    #     new_goal_pos = self.default_goal_pos + offset
+    #     new_goal_pos = new_goal_pos.unsqueeze(0).repeat(self.envs_idx)
+
+    #     self.goal_target.set_pos(new_goal_pos, envs_idx=self.envs_idx)  #we already did the repeat earlier
+
+    #     # reset buffers
+    #     self.last_actions[envs_idx] = 0.0
+    #     self.last_dof_vel[envs_idx] = 0.0
+    #     self.episode_length_buf[envs_idx] = 0
+    #     self.reset_buf[envs_idx] = True
+
+    #     # fill extras
+    #     self.extras["episode"] = {}
+    #     for key in self.episode_sums.keys():
+    #         self.extras["episode"]["rew_" + key] = (
+    #             torch.mean(self.episode_sums[key][envs_idx]).item() / self.env_cfg["episode_length_s"]
+    #         )
+    #         self.episode_sums[key][envs_idx] = 0.0
+
+    #     # self._resample_commands(envs_idx)
+
+    #     # self.franka.set_pos(self.pos, envs_idx=envs_idx)
+    #     # self.scene.step()
 
     def reset(self):
         self.reset_buf[:] = True
@@ -340,4 +415,35 @@ class FrankaGo2Env:
     # reward based on how close cube is to the goal target
     # reward scales make this negative later
     def _reward_goal_distance(self):
+        # Compute distance between cube and goal
+        distance = torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
+
+        # Define thresholds
+        max_dist = 0.4    # Worst case
+        zero_point = 0.2  # Reward = 0 here
+        best_dist = 0.05  # Best case (max reward here)
+
+        # Initialize reward tensor
+        reward = torch.zeros_like(distance)
+
+        # Case 1: distance > 0.2 -> linearly negative reward
+        far_mask = distance > zero_point
+        reward[far_mask] = - (distance[far_mask] - zero_point) / (max_dist - zero_point)
+
+        # Case 2: distance <= 0.2 -> linearly increasing reward toward 0.05
+        close_mask = distance <= zero_point
+        reward[close_mask] = (zero_point - distance[close_mask]) / (zero_point - best_dist)
+
+        # print("Distance:", distance)
+        # print("Shaped reward:", reward)
+
+        return reward
+
+    def _goal_distance(self):
         return torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
+    
+
+
+
+
+#TODO  MAKE BETTER -> reward shaping?
