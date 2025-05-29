@@ -42,16 +42,12 @@ def main():
         gs.morphs.Plane(),
     )
     cube = scene.add_entity(
-        material=gs.materials.MPM.Elastic(),
-        morph=gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.025),
-            euler=(0, 0, 0),
-        ),
-        surface=gs.surfaces.Default(
-            vis_mode="particle",
-        ),
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04), # block
+            pos=(0.65, 0.0, 0.02),
+        )
     )
+        
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         material=gs.materials.Rigid(coup_friction=1.0),
@@ -74,38 +70,45 @@ def main():
         np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
         np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
     )
+    while True:
+        # cube_pos = np.array([0.5, 0.0, 0.02])
+        # # cube_pos_batch = np.repeat(cube_pos[np.newaxis], 1, axis=0)
+        # cube.set_pos(cube_pos)
 
-    end_effector = franka.get_link("hand")
-    # move to pre-grasp pose
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.64, 0.0, 0.135]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    qpos[-2:] = 0.03
-    franka.set_dofs_position(qpos[:-2], motors_dof)
-    franka.set_dofs_position(qpos[-2:], fingers_dof)
 
-    # grasp with 1N force
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-    franka.control_dofs_force(np.array([-1, -1]), fingers_dof)
-    # franka.control_dofs_position(np.array([0, 0]), fingers_dof) # you can also use position control
 
-    for i in range(100):
-        scene.step()
 
-    # lift
-    for i in range(300):
+        end_effector = franka.get_link("hand")
+        # move to pre-grasp pose
         qpos = franka.inverse_kinematics(
             link=end_effector,
-            pos=np.array([0.64, 0.0, 0.135 + 0.0005 * i]),
+            pos=np.array([0.64, 0.0, 0.135]),
             quat=np.array([0, 1, 0, 0]),
         )
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        scene.step()
+        qpos[-2:] = 0.03
+        franka.set_dofs_position(qpos[:-2], motors_dof)
+        franka.set_dofs_position(qpos[-2:], fingers_dof)
 
-    for i in range(100):
-        scene.step()
+        # grasp with 1N force
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-1, -1]), fingers_dof)
+        # franka.control_dofs_position(np.array([0, 0]), fingers_dof) # you can also use position control
+
+        for i in range(100):
+            scene.step()
+
+        # lift
+        for i in range(300):
+            qpos = franka.inverse_kinematics(
+                link=end_effector,
+                pos=np.array([0.64, 0.0, 0.135 + 0.0005 * i]),
+                quat=np.array([0, 1, 0, 0]),
+            )
+            franka.control_dofs_position(qpos[:-2], motors_dof)
+            scene.step()
+
+        for i in range(100):
+            scene.step()
 
 
 if __name__ == "__main__":

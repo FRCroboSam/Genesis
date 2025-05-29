@@ -109,7 +109,7 @@ class FrankaGo2Env:
         # build
         self.scene.build(n_envs=num_envs)
         
-        pos = torch.tensor([1.65, -1.2, 0.135], dtype=torch.float32, device=self.device)
+        pos = torch.tensor([ 0.6781, -0.0205,  0.3626], dtype=torch.float32, device=self.device)
         self.pos = pos.unsqueeze(0).repeat(self.num_envs, 1)
         quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
         self.quat = quat.unsqueeze(0).repeat(self.num_envs, 1)
@@ -169,31 +169,28 @@ class FrankaGo2Env:
         # print("TIMESTEP: " + str(self.episode_length_buf))
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
-
         
-        exec_actions[:,3] = 0.0
+        # exec_actions[:,3] = -1 -> This hard codes it to close
         delta_pos = exec_actions[:, :3] * 0.05  #should be 5cm max movement
         gripper_cmd = exec_actions[:, 3]
 
 
 
-        finger_width = (1 + gripper_cmd) * 0.02  # Map [-1,1]→[0,0.04]
+        finger_width = (1 - gripper_cmd) * 0.02  # Map [-1,1]→[0,0.04]
         finger_pos = torch.stack([finger_width, finger_width], dim=1)  # Both fingers
-
         self.pos += delta_pos
 
 
 
 
         self.qpos = self.franka.inverse_kinematics(
-            link=self.end_effector,
+            link=self.franka.get_link("hand"),
             pos=self.pos,
             quat=self.quat,
         )
 
 
-        
-        # Execute movements
+        # # Execute movements
         self.franka.control_dofs_position(self.qpos[:, :-2], self.motors_dof, self.envs_idx)
 
         # if not self.place_only:
@@ -277,17 +274,21 @@ class FrankaGo2Env:
             return
 
         # reset dofs
+        # original pos for right on top of cube -> franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
         franka_pos = torch.tensor(
             [-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04], 
             device=self.device
         )
+
+        #doing set pos doesn't actually move it
+        # print("INITIAL FRANKA POS: " + str(self.franka.get_link("hand").get_pos()))    #THis gets you accurate position -> based on qpos you set earlier
         franka_pos = franka_pos.unsqueeze(0).repeat(len(envs_idx), 1)
         self.franka.set_qpos(franka_pos, envs_idx=envs_idx)
         self.scene.step()
 
         # Reset pos and quat only for the envs being reset
-        pos = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
-        self.pos[envs_idx] = pos.unsqueeze(0).repeat(len(envs_idx), 1)
+        # pos = torch.tensor([], dtype=torch.float32, device=self.device)
+        # self.pos[envs_idx] = pos.unsqueeze(0).repeat(len(envs_idx), 1)
 
         quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32, device=self.device)
         self.quat[envs_idx] = quat.unsqueeze(0).repeat(len(envs_idx), 1)
@@ -297,7 +298,7 @@ class FrankaGo2Env:
         cube_pos_batch = np.repeat(cube_pos[np.newaxis], len(envs_idx), axis=0)
         self.cube.set_pos(cube_pos_batch, envs_idx=envs_idx)
 
-        # Reset arm pos for envs being reset
+        # Reset arm pos for envs being reset -> unused
         arm_pos = torch.tensor([0.1, 0.0, 0.8], device=self.device)
         arm_pos = arm_pos.unsqueeze(0).repeat(len(envs_idx), 1)
         # (You can assign/use arm_pos here as needed for envs_idx)
@@ -414,6 +415,66 @@ class FrankaGo2Env:
     
     # reward based on how close cube is to the goal target
     # reward scales make this negative later
+
+    def _reward_grasping_block(self):
+        # Midpoint between left and right fingers
+        finger_pos = (self.franka.get_link("right_finger").get_pos() + self.franka.get_link("left_finger").get_pos()) / 2.0
+
+        # Distance between cube and finger midpoint
+        distance = torch.norm(self.cube.get_pos() - finger_pos, dim=1)
+
+        # Thresholds
+        best_dist = 0.05      # Best proximity (reward = +1)
+        close_dist = 0.10     # Within grasping range (small positive)
+        max_dist = 0.25       # Beyond this: strongly negative
+
+        reward = torch.zeros_like(distance)
+
+        # Case 1: distance <= close_dist → linearly positive up to +1 at best_dist
+        close_mask = distance <= close_dist
+        reward[close_mask] = (close_dist - distance[close_mask]) / (close_dist - best_dist)
+
+        # Case 2: distance > close_dist → linearly decreasing negative reward
+        far_mask = distance > close_dist
+        reward[far_mask] = - (distance[far_mask] - close_dist) / (max_dist - close_dist)
+
+        # Optional: Clamp to avoid large values
+        reward = torch.clamp(reward, -1.0, 1.0)
+
+        # print("GRASP BLOCK DIST:", distance)
+        # print("REWARD:", reward)
+
+        gripper_closed = self.franka.get_dofs_position([self.dofs_idx[8]]) <= 0.02
+
+        reward = torch.clamp(reward, -1.0, 1.0)
+
+        # Check if gripper is closed (assuming right finger is sufficient)
+        gripper_closed = self.franka.get_dofs_position([self.dofs_idx[8]]) <= 0.02  # shape: [batch_size, 1]
+
+        # Add +2 bonus where both gripper is closed AND object is within close_dist
+        bonus_mask = torch.logical_and(gripper_closed.squeeze(), close_mask)
+        reward[bonus_mask] += 2.0
+
+        return reward
+
+
+
+
+    def _reward_pick_cube(self):
+        block_position = self.cube.get_pos()
+        gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2
+        reward = -torch.norm(block_position - gripper_position, dim=1) + torch.maximum(torch.tensor(0.02), block_position[:, 2]) * 10
+        return reward
+
+
+
+    #TODO RUN THIS FOR LONGER WITH MORE ENVS
+    def _reward_lifting_block(self):
+        reward = torch.maximum(torch.tensor(0.0), self.cube.get_pos()[:, 2] - 0.0199) * 20
+        # print("CUBE HEIGHT: " + str(self.cube.get_pos()[:, 2]) + " REWARD: " + str(reward))
+
+        return reward
+
     def _reward_goal_distance(self):
         # Compute distance between cube and goal
         distance = torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
@@ -434,8 +495,7 @@ class FrankaGo2Env:
         close_mask = distance <= zero_point
         reward[close_mask] = (zero_point - distance[close_mask]) / (zero_point - best_dist)
 
-        # print("Distance:", distance)
-        # print("Shaped reward:", reward)
+        # print("GOAL DISTANCE:" + str(distance) + " reward: " + str(reward))
 
         return reward
 

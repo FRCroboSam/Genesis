@@ -118,9 +118,7 @@ def get_cfgs():
     }
     reward_cfg = {
             "reward_scales": {
-            "goal_distance": 1.0,
-            "lifting_block": 5,
-            "grasping_block":1.0
+            "pick_cube": 1.0
 
         },
     }
@@ -174,13 +172,3 @@ if __name__ == "__main__":
 # training
 python examples/locomotion/go2_train.py
 """
-
-
-
-
-
-
-
-
-#IDEas -> try to recreate policy that was able to pick well in the past 
-#   then train a policy thats able to place well, combine them into one unified policy that can do both 
