@@ -465,6 +465,9 @@ class FrankaGo2Env:
         gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2
         reward = -torch.norm(block_position - gripper_position, dim=1) + torch.maximum(torch.tensor(0.02), block_position[:, 2]) * 10
         return reward
+    
+
+
 
 
 
@@ -507,3 +510,13 @@ class FrankaGo2Env:
 
 
 #TODO  MAKE BETTER -> reward shaping?
+#   see if it learns faster with pick only if i make it easier -> move the arm back to really close to the cube, like 0.65 or something
+
+#wokflow -> change some params, test with 1 env viz see if it looks ok then start training
+
+
+
+#STEPS: Run rochelle Ni's grasp cube, see if you can get it to work normally with the current param ie. move arm up and then if you can't
+#   lower the arm pos again and then if that still doesnt work try to get genesis env repo to work using a continuous action space
+
+#if you can make that work make this work for train_pick_only
