@@ -118,7 +118,7 @@ def get_cfgs():
     }
     reward_cfg = {
             "reward_scales": {
-            "pick_cube": 1.0
+            "place_cube": 1.0
 
         },
     }
@@ -158,6 +158,7 @@ def main():
     print("SHOWING VIEWER: " + str(args.show_viewer))
     env = FrankaGo2Env(
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg, show_viewer=args.show_viewer
+        , place_only=True
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
@@ -170,7 +171,7 @@ if __name__ == "__main__":
 
 """
 # training
-python examples/locomotion/go2_train.py
+python franka_pick_place/frank_train_place_only.py
 """
 
 

@@ -11,7 +11,9 @@ def gs_rand_float(lower, upper, shape, device):
 
 
 class FrankaGo2Env:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, place_only=False):
+        self.place_only = place_only
+        print(f"Place Only{self.place_only}")
         self.goal_index = 0
         self.target_poses = []
         self.reach_target_threshold = 0.08
@@ -63,14 +65,21 @@ class FrankaGo2Env:
         )
         
         self.end_effector = self.franka.get_link("hand")
-
-        
-        self.cube = self.scene.add_entity(
-            gs.morphs.Box(
-                size=(0.04, 0.04, 0.04), # block
-                pos=(0.65, 0.0, 0.02),
+        if not self.place_only:
+            self.cube = self.scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.04, 0.04, 0.04), # block
+                    pos=(0.66, 0.0, 0.02),
+                )
             )
-        )
+        else:
+            self.cube = self.scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.07, 0.07, 0.07), # block
+                    pos=(0.66, 0.0, 0.05),
+                    euler=(0, 0, 0)
+                )
+            )
         
         self.envs_idx = np.arange(num_envs)
 
@@ -170,7 +179,8 @@ class FrankaGo2Env:
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
         
-        # exec_actions[:,3] = -1 -> This hard codes it to close
+        if self.place_only:
+            exec_actions[:,3] = 1 #-> This hard codes it to close
         delta_pos = exec_actions[:, :3] * 0.05  #should be 5cm max movement
         gripper_cmd = exec_actions[:, 3]
 
@@ -274,11 +284,22 @@ class FrankaGo2Env:
             return
 
         # reset dofs
-        # original pos for right on top of cube -> franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
-        franka_pos = torch.tensor(
-            [-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04], 
-            device=self.device
-        )
+        # original pos for right on top of cube -> good for model_100 best with 0.66og
+        if not self.place_only:
+            franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]).to(self.device)
+
+
+        #TODO: make it work with this slightly harder starting pos
+        # franka_pos = torch.tensor([-1.0124, 1.5559, 1.4662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]).to(self.device)
+
+        # franka_pos = torch.tensor(
+        #     [-1.075, 1.5559, 1.7662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04], 
+        #     device=self.device
+        # )    -> modified harder position 
+
+        else:     #place_only case
+            franka_pos = torch.tensor([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.0, 0.0]).to(self.device)
+
 
         #doing set pos doesn't actually move it
         # print("INITIAL FRANKA POS: " + str(self.franka.get_link("hand").get_pos()))    #THis gets you accurate position -> based on qpos you set earlier
@@ -294,8 +315,13 @@ class FrankaGo2Env:
         self.quat[envs_idx] = quat.unsqueeze(0).repeat(len(envs_idx), 1)
 
         # Reset cube position only for envs being reset
-        cube_pos = np.array([0.5, 0.0, 0.02])
+        if not self.place_only:
+            cube_pos = np.array([0.66, 0.0, 0.02])
+        else:
+            cube_pos = np.array([0.65, 0.0, 0.05])
+
         cube_pos_batch = np.repeat(cube_pos[np.newaxis], len(envs_idx), axis=0)
+
         self.cube.set_pos(cube_pos_batch, envs_idx=envs_idx)
 
         # Reset arm pos for envs being reset -> unused
@@ -336,7 +362,8 @@ class FrankaGo2Env:
         # Uncomment if you want to resample commands
         # self._resample_commands(envs_idx)
 
-
+        # for _ in range(10):  # or however many extra steps you want
+        #     self.scene.step()
 
 
     # def reset_idx(self, envs_idx):
@@ -461,14 +488,28 @@ class FrankaGo2Env:
 
 
     def _reward_pick_cube(self):
-        block_position = self.cube.get_pos()
-        gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2
-        reward = -torch.norm(block_position - gripper_position, dim=1) + torch.maximum(torch.tensor(0.02), block_position[:, 2]) * 10
+        gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2        
+        # gripper_height = gripper_position[:, 2]
+
+        # Clamp block Z to [0.02, 0.2] for reward
+        block_lift_reward = torch.clamp(self.cube.get_pos()[:, 2], min=0.02, max=0.2) * 10
+
+        # Penalize lifting gripper above 0.3 (subtract penalty if height > 0.3)
+        # gripper_penalty = torch.clamp(gripper_height - 0.3, min=0.0) * 10.0  # penalty scale = 10.0
+        reward = (
+            -torch.norm(self.cube.get_pos() - gripper_position, dim=1)
+            + block_lift_reward
+            # - gripper_penalty
+        )
+
         return reward
     
 
 
-
+    def _reward_place_cube(self):
+        distance = torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
+        cube_arm_dist = -torch.norm(self.cube.get_pos() - self.end_effector.get_pos(), dim=1) * 5
+        return -distance + cube_arm_dist
 
 
     #TODO RUN THIS FOR LONGER WITH MORE ENVS
