@@ -13,7 +13,7 @@ def gs_rand_float(lower, upper, shape, device):
 class FrankaGo2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, place_only=False):
         self.place_only = place_only
-        print(f"Place Only{self.place_only}")
+        print(f"Place Only {self.place_only}")
         self.goal_index = 0
         self.target_poses = []
         self.reach_target_threshold = 0.08
@@ -75,8 +75,8 @@ class FrankaGo2Env:
         else:
             self.cube = self.scene.add_entity(
                 gs.morphs.Box(
-                    size=(0.07, 0.07, 0.07), # block
-                    pos=(0.66, 0.0, 0.05),
+                    size=(0.04, 0.04, 0.04), # block
+                    pos=(0.65, 0.0, 0.05),
                     euler=(0, 0, 0)
                 )
             )
@@ -318,7 +318,7 @@ class FrankaGo2Env:
         if not self.place_only:
             cube_pos = np.array([0.66, 0.0, 0.02])
         else:
-            cube_pos = np.array([0.65, 0.0, 0.05])
+            cube_pos = np.array([0.66, 0.0, 0.05])
 
         cube_pos_batch = np.repeat(cube_pos[np.newaxis], len(envs_idx), axis=0)
 
@@ -507,6 +507,15 @@ class FrankaGo2Env:
 
 
     def _reward_place_cube(self):
+        gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2        
+
+        dist = torch.norm(gripper_position - self.goal_target.get_pos(), dim=1)
+        reward = (dist <= 0.08).float() * 5.0        
+        # cube_arm_dist = -torch.norm(self.cube.get_pos() - self.end_effector.get_pos(), dim=1) * 5
+        return reward - dist
+    
+
+    def _reward_arm_naive(self):
         distance = torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
         cube_arm_dist = -torch.norm(self.cube.get_pos() - self.end_effector.get_pos(), dim=1) * 5
         return -distance + cube_arm_dist
