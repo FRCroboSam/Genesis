@@ -139,7 +139,7 @@ def main():
     parser.add_argument("-e", "--exp_name", type=str, default="franka-pick-place")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
     parser.add_argument("-v", "--show_viewer", action="store_true", help="Show the viewer")
-    parser.add_argument("--max_iterations", type=int, default=101)
+    parser.add_argument("--max_iterations", type=int, default=1000)          #Normal is 101
     args = parser.parse_args()
 
     gs.init(logging_level="warning")

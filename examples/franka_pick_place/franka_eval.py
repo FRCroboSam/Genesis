@@ -25,6 +25,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="franka-pick-place")
     parser.add_argument("--ckpt", type=int, default=100)
+
+    place_only = True
     args = parser.parse_args()
 
     gs.init()
@@ -40,6 +42,7 @@ def main():
         reward_cfg=reward_cfg,
         command_cfg=command_cfg,
         show_viewer=True,
+        place_only=place_only
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)

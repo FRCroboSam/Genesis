@@ -97,14 +97,14 @@ class FrankaGo2Env:
                 radius=0.04
             )
         )
-        self.default_goal_pos = np.array([0.7, 0.0, 0])
+        self.default_goal_pos = np.array([0.68, 0.0, 0])
 
         # Initialize random goal target positions
         for _ in range(12):
             # default range
-            offset = np.array([random.rand() * 0.2, random.rand() * 0.6 - 0.3, 0.35 * random.rand() + 0.1])
+            # offset = np.array([random.rand() * 0.2, random.rand() * 0.6 - 0.3, 0.35 * random.rand() + 0.1])
             #less picky range
-            # offset = np.array([random.rand() * 0.1, random.rand() * 0.4 - 0.2, 0.2 * random.rand() + 0.1])
+            offset = np.array([0.0, random.rand() * 0.4 - 0.2, 0.2 * random.rand() + 0.1])
 
             target_pos = self.default_goal_pos + offset
             target_pos = np.repeat(target_pos[np.newaxis], self.num_envs, axis=0)
@@ -176,8 +176,10 @@ class FrankaGo2Env:
 
     def step(self, actions):
         # print("TIMESTEP: " + str(self.episode_length_buf))
+        # print("PRE CLIP ACTIONS: " + str(actions))
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
+        # print("ACTIONS: " + str(self.actions))
         
         if self.place_only:
             exec_actions[:,3] = 1 #-> This hard codes it to close
@@ -195,7 +197,7 @@ class FrankaGo2Env:
 
         self.qpos = self.franka.inverse_kinematics(
             link=self.franka.get_link("hand"),
-            pos=self.pos,
+            pos= self.pos,   #self.goal_target.get_pos(),
             quat=self.quat,
         )
 
@@ -330,9 +332,9 @@ class FrankaGo2Env:
         # (You can assign/use arm_pos here as needed for envs_idx)
 
         # Generate random offset per env to reset
-        x = torch.empty(len(envs_idx), device=self.device).uniform_(0.0, 0.2)
-        y = torch.empty(len(envs_idx), device=self.device).uniform_(-0.3, 0.3)
-        z = torch.empty(len(envs_idx), device=self.device).uniform_(0.1, 0.45)
+        x = torch.empty(len(envs_idx), device=self.device).uniform_(0.0, 0.05)      #forward
+        y = torch.empty(len(envs_idx), device=self.device).uniform_(-0.2, 0.3)      #side to side
+        z = torch.empty(len(envs_idx), device=self.device).uniform_(0.15, 0.45)        #vertical up 
 
         offsets = torch.stack([x, y, z], dim=1)  # shape: (len(envs_idx), 3)
 
@@ -509,10 +511,11 @@ class FrankaGo2Env:
     def _reward_place_cube(self):
         gripper_position = (self.franka.get_link("left_finger").get_pos() + self.franka.get_link("right_finger").get_pos()) / 2        
 
-        dist = torch.norm(gripper_position - self.goal_target.get_pos(), dim=1)
-        reward = (dist <= 0.08).float() * 5.0        
-        # cube_arm_dist = -torch.norm(self.cube.get_pos() - self.end_effector.get_pos(), dim=1) * 5
-        return reward - dist
+        dist = torch.norm(gripper_position - self.goal_target.get_pos(), dim=1) * 2
+        reward = torch.clamp(1.0 - (dist / 0.1), min=0.0) * 10     
+        cube_arm_dist = -torch.norm(self.cube.get_pos() - gripper_position, dim=1) * 10
+        # print("REWARD: " + str(reward))
+        return reward - dist + cube_arm_dist    #TODO: make these separate to vis better
     
 
     def _reward_arm_naive(self):
@@ -570,3 +573,8 @@ class FrankaGo2Env:
 #   lower the arm pos again and then if that still doesnt work try to get genesis env repo to work using a continuous action space
 
 #if you can make that work make this work for train_pick_only
+
+
+
+
+#TODO: try running for a long time, look into slowing down the arm, play with grasp_soft_cube first
