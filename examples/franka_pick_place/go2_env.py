@@ -555,6 +555,9 @@ class FrankaGo2Env:
 
         return reward
 
+    def _reward_naive_distance(self):
+        return -torch.norm(self.end_effector.get_pos() - self.goal_target.get_pos(), dim=1)
+
     def _goal_distance(self):
         return torch.norm(self.cube.get_pos() - self.goal_target.get_pos(), dim=1)
     
